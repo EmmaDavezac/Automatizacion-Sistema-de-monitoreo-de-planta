@@ -12,7 +12,7 @@ const bool MODO_OFFLINE = false;  // Si es 'true', el ESP32 NO intentará conect
 #define SSID "Enma"                  // Nombre (SSID) de la red WiFi a la que se conectará el ESP32
 #define PASSWORD "12345678"                         // Contraseña de la red 
 // URL completa del Webhook de Discord para enviar notificaciones de alerta
-#define DISCORD_WEBHOOK_URL "https://discord.com/api/webhooks/1420131501483491501/z-Hdgn5SIQ-4id5jkWvKb98r2-RxKyiOobjE0X7uc441p3MkwR4PPk13mJN2Gyu6-DPh"
+#define DISCORD_WEBHOOK_URL "https://discord.com/api/webhooks/1437819811915628705/YXGigV365ycnQdp17CIawfg5VbqWDYvN0e5G5NSwFgGx4RFFsxCMW-QFn4ef0wVigo8Q"
 
 
 // =================================================================
@@ -33,19 +33,25 @@ DHT dht_sensor(DHT_SENSOR_PIN, DHT_SENSOR_TYPE);
 
 // LÍMITES CRÍTICOS PARA LA PLANTA
 const float TEMP_CRITICA_BAJA = 10.0;    // Temperatura mínima tolerable para la planta (°C)
-const float TEMP_CRITICA_ALTA = 25.0;    // Temperatura máxima tolerable para la planta (°C)
+const float TEMP_CRITICA_ALTA = 30.0;    // Temperatura máxima tolerable para la planta (°C)
 const float HUMEDAD_CRITICA_BAJA = 80; // Humedad relativa mínima tolerable para la planta (%)
 // El ESP32 tiene un ADC de 12 bits, por lo que el valor máximo es 4095.
 const float VALOR_MAXIMO_LUZ_PERMITIDO = 1000; // Valor analógico máximo permitido para considerar que la planta NO está en el sol (mas luz = menos valor analógico)
 
 
 // Intervalos de tiempo de lectura
-const long INTERVALO_LECTURA_M = 5;      // Frecuencia de lectura en minutos (0.15 min = 9 segundos)
-const long INTERVALO_LECTURA_S = INTERVALO_LECTURA_M *60; // Conversión del intervalo a segundos
-const long INTERVALO_LECTURA_MS = INTERVALO_LECTURA_S*1000;// Conversión del intervalo a milisegundos para usar en delay()
+// Frecuencia de lectura en minutos (0.25 min = 15 segundos)
+const float INTERVALO_LECTURA_M = 0.25; 
+
+// Conversión del intervalo a milisegundos para usar en delay().
+// Usamos long en el resultado final ya que delay() requiere milisegundos (un entero grande).
+const long INTERVALO_LECTURA_MS = (long)(INTERVALO_LECTURA_M * 60.0 * 1000.0);
 
 
-
+// Tiempo mínimo en milisegundos entre dos notificaciones de alerta consecutivas
+const unsigned long COOLDOWN_ALERTA_M = 1UL;               // Tiempo de enfriamiento en minutos
+const unsigned long COOLDOWN_ALERTA_MS = COOLDOWN_ALERTA_M * 60UL * 1000UL;
+unsigned long tiempoUltimaAlerta = 0;           // Variable para almacenar el tiempo (millis()) de la última alerta enviada
 
 // =================================================================
 // FUNCIÓN PARA ENVIAR NOTIFICACIONES A NUESTRO CANAL DE DISCORD
@@ -131,7 +137,7 @@ void setup() {
         Serial.println(F("¡Conexión Wi-Fi establecida!"));
         
         // Envía un mensaje de inicio a Discord confirmando el funcionamiento
-        enviarMensajeDiscord("Sistema de monitoreo de planta iniciado");
+        enviarMensajeDiscord("✅ Sistema de monitoreo de planta iniciado");
     }
     delay(2000);
 }
@@ -181,9 +187,7 @@ void loop() {
         }
 
         // 3. Control de LEDs y Envío de Discord
-        if (mensajeAlerta.length() > 0) { // Si hay alguna alerta acumulada
-            // CONDICIÓN MALA (Activación de LEDs Rojos)
-            
+      
             // Control de LEDs de TEMPERATURA
             if ((temperatura < TEMP_CRITICA_BAJA) || (temperatura > TEMP_CRITICA_ALTA) ) {
                 digitalWrite(LED_ROJO_PIN, HIGH); // Rojo ON
@@ -209,8 +213,19 @@ void loop() {
             
             Serial.print(F("ALERTA : "));
             Serial.println(mensajeAlerta);
-            enviarMensajeDiscord("ALERTA DE PLANTA: " + mensajeAlerta); // Envía el mensaje de alerta (solo si MODO_OFFLINE es false)
-        } else {
+
+            // Logica del enfriamiento de alertas
+            if ((millis() - tiempoUltimaAlerta >= COOLDOWN_ALERTA_MS) && mensajeAlerta.length() > 0) {
+                enviarMensajeDiscord("🚨 ALERTA DE PLANTA: " + mensajeAlerta); // Envía el mensaje  si el modo offline está desactivado y se paso el tiempo de enfriamiento
+                tiempoUltimaAlerta = millis(); // Actualiza el tiempo de la última alerta
+            } else {
+                unsigned long tiempoRestante = (COOLDOWN_ALERTA_MS - (millis() - tiempoUltimaAlerta)) / 1000UL;
+                Serial.print(F("Alerta silenciada, no se envió a Discord. Se volveran a enviar alertas en "));
+                Serial.print(tiempoRestante);
+                Serial.println(F(" segundos."));
+            
+            
+        } if (mensajeAlerta.length() == 0) {
             // CONDICIÓN BUENA (No hay alertas, LEDs Verdes ON)
             
             Serial.print(F("Condiciones OK"));
